@@ -1,3 +1,6 @@
+--!native
+--!optimize 2
+
 local module = {}
 
 if game.RunService:IsServer() then
@@ -618,7 +621,7 @@ function module.AddCharacter(sourceScript: BaseScript?, character: Model)
 		module.StopAnimation(state, { Name = "ToolNone" })
 	end))
 
-	local playEmoteBindable = sourceScript:QueryDescendants("> BindableFunction [Name = PlayEmote]")[1]
+	local playEmoteBindable = sourceScript:QueryDescendants("> BindableFunction [Name = \"PlayEmote\"]")[1]
 	if not playEmoteBindable then
 		playEmoteBindable = Instance.new("BindableFunction")
 		playEmoteBindable.Name = "PlayEmote"
