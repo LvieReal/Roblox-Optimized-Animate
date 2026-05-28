@@ -9,4 +9,10 @@ Optimized Animate is a lightweight, portable replacement for default Animate scr
 - Replace `PATH` with path to the module.
 ##
 
+## Unique features:
+- Control whether all Humanoids in game will be animated by passing `playersOnly: boolean` parameter to `InitServer()`
+- Easily add and play custom animations using `AnimateModule.AddAnimation()`, stop with `AnimateModule.StopAnimation()`
+- Defer functions until character is added to AnimateModule using `AnimateModule.DeferUntilCharacterAdded` (fires immediately if character is already in registry)
+##
+
 Learn more about this module by inspecting it's source, it should be easy to understand!
