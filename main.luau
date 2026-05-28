@@ -7,12 +7,12 @@ if game.RunService:IsServer() then
 			return
 		end
 		local newAnimate = script:FindFirstChild("ActivateScript"):Clone()
-		local existingAnimates = humanoid.Parent:QueryDescendants("> BaseScript [Name = \"Animate\"]")
-		if #existingAnimates ~= 0 then
-			for _, v in existingAnimates[1]:GetChildren() do
+		local existingAnimate = humanoid.Parent:QueryDescendants("> BaseScript [Name = \"Animate\"]")[1]
+		if existingAnimate then
+			for _, v in existingAnimate:GetChildren() do
 				v.Parent = newAnimate
 			end
-			existingAnimates[1]:Destroy()
+			existingAnimate:Destroy()
 		end
 		newAnimate.Name = "Animate"
 		newAnimate:SetAttribute("Path", "@game/" .. script:GetFullName():gsub("%.", "/"))
@@ -90,7 +90,7 @@ export type AnimateState = {
 	PlayingEmote: Track?
 }
 
-local function resolveTrack(state, parameters): Track?
+local function resolveTrack(state, parameters: {}): Track?
 	local track = state.Tracks[parameters.Name]
 	if not track then
 		return nil
@@ -139,10 +139,21 @@ function module.GetStateFromCharacter(character: Model): AnimateState
 	return active[character]
 end
 
-function module.AddAnimation(state: AnimateState, parameters): Track
+function module.AddAnimation(state: AnimateState, parameters: {}): Track
+	
+	if not state.Animator then
+		return
+	end
 
-	local n = parameters.Name
-	local animationObj = parameters.Animation
+	local n: string? = parameters.Name
+	if not n then
+		return
+	end
+
+	local animationObj: Animation? = parameters.Animation
+	if not animationObj then
+		return
+	end
 
 	local weight = animationObj:FindFirstChild("Weight")
 	local weightValue = if weight and weight:IsA("NumberValue") then weight.Value else 1
@@ -188,7 +199,7 @@ function module.AddAnimation(state: AnimateState, parameters): Track
 
 end
 
-function module.AdjustAnimationSpeed(state: AnimateState, parameters)
+function module.AdjustAnimationSpeed(state: AnimateState, parameters: {})
 	local track = resolveTrack(state, parameters)
 	if not track then
 		return
@@ -219,7 +230,7 @@ function module.ForEachTrack(state: AnimateState, f: () -> ())
 	end
 end
 
-function module.StopAnimation(state: AnimateState, parameters)
+function module.StopAnimation(state: AnimateState, parameters: {})
 	local track = resolveTrack(state, parameters)
 	if not track or not track.Obj.IsPlaying then
 		return
@@ -238,7 +249,7 @@ function module.StopAnimation(state: AnimateState, parameters)
 	track.Obj:Stop(parameters.FadeTime or module.DEFAULTS.FADE_TIME_STOP)
 end
 
-function module.StopAllAnimations(state: AnimateState, parameters)
+function module.StopAllAnimations(state: AnimateState, parameters: {})
 	if typeof(parameters) ~= "table" then
 		parameters = {}
 	end
@@ -265,7 +276,7 @@ function module.StopAllAnimations(state: AnimateState, parameters)
 	end)
 end
 
-function module.PlayAnimation(state: AnimateState, parameters): Track?
+function module.PlayAnimation(state: AnimateState, parameters: {}): Track?
 
 	if #state.PlayLocks ~= 0 then
 		return nil
@@ -382,6 +393,11 @@ function module.RemoveCharacter(character: Model)
 	if not state then
 		return
 	end
+	if state.Animator then
+		for _, v in state.Animator:GetPlayingAnimationTracks() do
+			v:Stop()
+		end
+	end
 	for _, v in state.Connections do
 		v:Disconnect()
 	end
@@ -453,9 +469,9 @@ function module.AddCharacter(sourceScript: BaseScript?, character: Model)
 		addAnimationLegacyWay(state, v)
 	end))
 
-	local animationsFolders = character:QueryDescendants("> Folder [Name = \"Animations\"]")
-	if animationsFolders[1] then
-		for _, v in animationsFolders[1]:QueryDescendants("Animation") do
+	local animationsFolder = character:QueryDescendants("> Folder [Name = \"Animations\"]")[1]
+	if animationsFolder then
+		for _, v in animationsFolder:QueryDescendants("Animation") do
 			addAnimationLegacyWay(state, v)
 		end
 	end
@@ -502,13 +518,13 @@ function module.AddCharacter(sourceScript: BaseScript?, character: Model)
 		end
 		module.PlayAnimation(state, { Name = "Jump", OverrideAll = true })
 		state.Threads.JumpToFallTransition = task.delay(0.3, function()
+			state.Threads.JumpToFallTransition = nil
 			if
 				state.HumanoidStates.Landed == true
 				or state.HumanoidStates.Climbing == true
 			then
 				return
 			end
-			state.Threads.JumpToFallTransition = nil
 			module.PlayAnimation(state, { Name = "Fall", OverrideAll = true })
 		end)
 	end))
@@ -602,7 +618,7 @@ function module.AddCharacter(sourceScript: BaseScript?, character: Model)
 		module.StopAnimation(state, { Name = "ToolNone" })
 	end))
 
-	local playEmoteBindable = sourceScript:FindFirstChild("PlayEmote")
+	local playEmoteBindable = sourceScript:QueryDescendants("> BindableFunction [Name = PlayEmote]")[1]
 	if not playEmoteBindable then
 		playEmoteBindable = Instance.new("BindableFunction")
 		playEmoteBindable.Name = "PlayEmote"
