@@ -9,9 +9,13 @@ A lightweight, portable replacement for the default `Animate` script Roblox inse
    ```lua
    require(script:GetAttribute("Path")).AddCharacter(script, script.Parent)
    ```
-3. To turn the module on, create a Script in ServerScriptService and paste:
+3. To turn the module on server (listen for humanoids and allow such methods as `AddAnimationServer`), create a Script in ServerScriptService and paste:
    ```lua
    require(PATH).InitServer()
+   ```
+   To turn the module on client (listen to events from server and run client loop), create a LocalScript in StarterPlayerScripts and paste:
+   ```lua
+   require(PATH).InitClient()
    ```
    Replace `PATH` with the path to your module.
 
