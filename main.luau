@@ -172,7 +172,7 @@ local function addAnimationLegacyWay(state: AnimateState, v: Animation)
 		AlwaysPlaying = alwaysPlaying,
 		Looped = isLooped,
 		Priority = if alwaysPlaying then Enum.AnimationPriority.Idle else nil,
-		PlayAfterLoadedIfWeight = if n == "Idle" then 1 else nil
+		PlayAfterLoadedIfWeight = if n == "Idle" then 9 else nil
 	})
 end
 
@@ -204,17 +204,6 @@ function module.AddAnimation(state: AnimateState, parameters: {}): Track
 	trackObj.Priority = parameters.Priority or Enum.AnimationPriority.Core
 	if typeof(parameters.Looped) == "boolean" then
 		trackObj.Looped = parameters.Looped
-	end
-
-	if n == "Idle" then
-		trackObj.KeyframeReached:Connect(function(keyframeName)
-			if keyframeName == "End" then
-				if state.HumanoidStates.Standing then
-					module.PlayAnimation(state, { Name = "Idle", OverrideAll = true })
-				end
-				return
-			end
-		end)
 	end
 
 	local trackInfo: Track = {
@@ -254,21 +243,35 @@ function module.AddAnimation(state: AnimateState, parameters: {}): Track
 	end))
 
 	local existingTrack = state.Tracks[n]
+	local subId
 	if existingTrack then
 		existingTrack.TotalWeight += trackInfo.Weight
 		table.insert(existingTrack.List, trackInfo)
+		subId = #existingTrack.List
 	else
 		state.Tracks[n] = {
 			List = { trackInfo },
 			TotalWeight = trackInfo.Weight
 		}
+		subId = 1
 	end
 
 	if
 		parameters.PlayAfterLoaded
 		or (parameters.PlayAfterLoadedIfWeight and trackInfo.WeightInstance and parameters.PlayAfterLoadedIfWeight == trackInfo.WeightInstance.Value)
 	then
-		module.PlayAnimation(state, { Name = n })
+		module.PlayAnimation(state, { Name = n, SubId = subId })
+	end
+
+	if n == "Idle" and (not trackInfo.WeightInstance or trackInfo.WeightInstance.Value == 1) then
+		trackObj.KeyframeReached:Connect(function(keyframeName)
+			if keyframeName == "End" then
+				if state.HumanoidStates.Standing then
+					module.PlayAnimation(state, { Name = "Idle", OverrideAll = true })
+				end
+				return
+			end
+		end)
 	end
 
 	return trackInfo
