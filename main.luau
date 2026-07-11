@@ -159,7 +159,7 @@ function rollAnimation(state: AnimateState, animName)
 	return idx
 end
 
-local function addAnimationLegacyWay(state: AnimateState, v)
+local function addAnimationLegacyWay(state: AnimateState, v: Animation)
 	local n = module.LEGACY_ANIM_NAMES_MAP[v.Parent.Name]
 	if not n then
 		return
@@ -172,7 +172,7 @@ local function addAnimationLegacyWay(state: AnimateState, v)
 		AlwaysPlaying = alwaysPlaying,
 		Looped = isLooped,
 		Priority = if alwaysPlaying then Enum.AnimationPriority.Idle else nil,
-		PlayAfterLoaded = n == "Idle"
+		PlayAfterLoadedIfWeight = if n == "Idle" then 1 else nil
 	})
 end
 
@@ -264,7 +264,10 @@ function module.AddAnimation(state: AnimateState, parameters: {}): Track
 		}
 	end
 
-	if parameters.PlayAfterLoaded then
+	if
+		parameters.PlayAfterLoaded
+		or (parameters.PlayAfterLoadedIfWeight and trackInfo.WeightInstance and parameters.PlayAfterLoadedIfWeight == trackInfo.WeightInstance.Value)
+	then
 		module.PlayAnimation(state, { Name = n })
 	end
 
