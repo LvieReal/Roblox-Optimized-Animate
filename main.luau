@@ -47,7 +47,7 @@ if RunService:IsServer() then
 	function module.AddAnimationServer(character: Model, parameters: {})
 		local args = {"AddAnimation", {
 			Character = character,
-			AddAnimationParameters = parameters
+			Parameters = parameters
 		}}
 		module.__RemoteEvent:FireAllClients(unpack(args))
 		Players.PlayerAdded:Connect(function(player)
@@ -58,14 +58,14 @@ if RunService:IsServer() then
 	function module.PlayAnimationServer(character: Model, parameters: {})
 		module.__RemoteEvent:FireAllClients("PlayAnimation", {
 			Character = character,
-			PlayAnimationParameters = parameters
+			Parameters = parameters
 		})
 	end
 
 	function module.StopAnimationServer(character: Model, parameters: {})
 		module.__RemoteEvent:FireAllClients("StopAnimation", {
 			Character = character,
-			StopAnimationParameters = parameters
+			Parameters = parameters
 		})
 	end
 
@@ -109,9 +109,9 @@ export type Track = {
 	PlayEverySeconds: number?,
 	PlayEverySecondsElapsed: number?,
 	LastTimePosition: number,
-	OnEnd: () -> (),
+	OnEnd: () -> ()?,
 	OnEndConnection: RBXScriptConnection,
-	OnLoop: () -> (),
+	OnLoop: () -> ()?,
 	OnLoopConnection: RBXScriptConnection
 }
 
@@ -127,10 +127,47 @@ export type AnimateState = {
 	PlayingEmote: Track?
 }
 
+type AddAnimationParameters = {
+	Name: string?,
+	Animation: Animation?,
+	Priority: Enum.AnimationPriority?,
+	Looped: boolean?,
+	AlwaysPlaying: boolean?,
+	PlayEverySeconds: number?,
+	OnEnd: () -> ()?,
+	OnLoop: () -> ()?,
+	PlayAfterLoaded: boolean?
+}
+
+type PlayAnimationParameters = {
+	Name: string?,
+	SubId: number?,
+	Speed: number?,
+	Weight: number?,
+	FadeTime: number?,
+	OverrideAll: boolean?,
+	OverrideWhitelist: {string},
+	OverrideBlacklist: {string},
+	OnEnd: () -> ()?,
+	OnLoop: () -> ()?,
+}
+
+type StopAnimationParameters = {
+	StoreTimePosition: boolean?,
+	FadeTime: number?
+}
+
+type StopAllAnimationsParameters = {
+	FadeTime: number,
+	Whitelist: {string}?,
+	Blacklist: {string}?,
+	StoreTimePositionFor: {string}?
+}
+
 local active: {[Model]: AnimateState} = {}
 local deferred = {}
 
-local function resolveTrack(state, parameters: {}): Track?
+local function resolveTrack(state, parameters: { Name: string?, SubId: number? }): Track?
 	local track = state.Tracks[parameters.Name]
 	if not track then
 		return nil
@@ -145,7 +182,7 @@ local function getRigScale(state: AnimateState)
 	return state.Character:GetScale()
 end
 
-function rollAnimation(state: AnimateState, animName)
+function rollAnimation(state: AnimateState, animName: string)
 	local track = state.Tracks[animName]
 	if not track then
 		return nil
@@ -164,41 +201,46 @@ local function addAnimationLegacyWay(state: AnimateState, v: Animation)
 	if not n then
 		return
 	end
-	local isLooped = not table.find(module.NON_LOOPED_ANIMS, v.Parent.Name)
 	local alwaysPlaying = n:match("Tool")
-	module.AddAnimation(state, {
+	local trackInfo, subId = module.AddAnimation(state, {
 		Name = n,
 		Animation = v,
 		AlwaysPlaying = alwaysPlaying,
-		Looped = isLooped,
-		Priority = if alwaysPlaying then Enum.AnimationPriority.Idle else nil,
-		PlayAfterLoadedIfWeight = if n == "Idle" then 9 else nil
+		Priority = if alwaysPlaying then Enum.AnimationPriority.Idle else nil
 	})
+	if trackInfo then
+		if not table.find(module.NON_LOOPED_ANIMS, v.Parent.Name) then
+			trackInfo.Obj.Looped = if n == "Idle" then trackInfo.Weight == 9 else true
+		end
+		if n == "Idle" and trackInfo.Weight == 9 then
+			module.PlayAnimation(state, { Name = "Idle", SubId = subId })
+		end
+	end
 end
 
 function module.GetStateFromCharacter(character: Model): AnimateState
 	return active[character]
 end
 
-function module.AddAnimation(state: AnimateState, parameters: {}): Track
+function module.AddAnimation(state: AnimateState, parameters: AddAnimationParameters): (Track?, number?)
 
 	if not state.Animator then
-		return
+		return nil
 	end
 
-	local n: string? = parameters.Name
+	local n = parameters.Name
 	if not n then
-		return
+		return nil
 	end
 
-	local animationObj: Animation? = parameters.Animation
+	local animationObj = parameters.Animation
 	if not animationObj then
-		return
+		return nil
 	end
 
 	local trackObj = state.Animator:LoadAnimation(animationObj)
 	if not trackObj then
-		return
+		return nil
 	end
 	trackObj.Name = n
 	trackObj.Priority = parameters.Priority or Enum.AnimationPriority.Core
@@ -256,29 +298,24 @@ function module.AddAnimation(state: AnimateState, parameters: {}): Track
 		subId = 1
 	end
 
-	if
-		parameters.PlayAfterLoaded
-		or (parameters.PlayAfterLoadedIfWeight and trackInfo.WeightInstance and parameters.PlayAfterLoadedIfWeight == trackInfo.WeightInstance.Value)
-	then
+	if parameters.PlayAfterLoaded then
 		module.PlayAnimation(state, { Name = n, SubId = subId })
 	end
 
-	if n == "Idle" and (not trackInfo.WeightInstance or trackInfo.WeightInstance.Value == 1) then
-		trackObj.KeyframeReached:Connect(function(keyframeName)
-			if keyframeName == "End" then
-				if state.HumanoidStates.Standing then
-					module.PlayAnimation(state, { Name = "Idle", OverrideAll = true })
-				end
-				return
+	trackObj.KeyframeReached:Connect(function(keyframeName)
+		if keyframeName == "End" and n == "Idle" then
+			if state.HumanoidStates.Standing then
+				module.PlayAnimation(state, { Name = "Idle", OverrideAll = true })
 			end
-		end)
-	end
+			return
+		end
+	end)
 
-	return trackInfo
+	return trackInfo, subId
 
 end
 
-function module.AdjustAnimationSpeed(state: AnimateState, parameters: {})
+function module.AdjustAnimationSpeed(state: AnimateState, parameters: { Value: number })
 	local track = resolveTrack(state, parameters)
 	if not track then
 		return
@@ -309,7 +346,7 @@ function module.ForEachTrack(state: AnimateState, f: () -> ())
 	end
 end
 
-function module.StopAnimation(state: AnimateState, parameters: {})
+function module.StopAnimation(state: AnimateState, parameters: StopAnimationParameters)
 	local track = resolveTrack(state, parameters)
 	if not track or not track.Obj.IsPlaying then
 		return
@@ -328,7 +365,7 @@ function module.StopAnimation(state: AnimateState, parameters: {})
 	track.Obj:Stop(parameters.FadeTime or module.DEFAULTS.FADE_TIME_STOP)
 end
 
-function module.StopAllAnimations(state: AnimateState, parameters: {})
+function module.StopAllAnimations(state: AnimateState, parameters: StopAllAnimationsParameters)
 	if typeof(parameters) ~= "table" then
 		parameters = {}
 	end
@@ -355,14 +392,10 @@ function module.StopAllAnimations(state: AnimateState, parameters: {})
 	end)
 end
 
-function module.PlayAnimation(state: AnimateState, parameters: {}): Track?
+function module.PlayAnimation(state: AnimateState, parameters: PlayAnimationParameters): Track?
 
 	if #state.PlayLocks ~= 0 then
 		return nil
-	end
-
-	if typeof(parameters) ~= "table" then
-		parameters = {}
 	end
 
 	if not parameters.SubId then
@@ -415,10 +448,10 @@ function module.PlayAnimation(state: AnimateState, parameters: {}): Track?
 				track.OnEndConnection = track.Obj.Ended:Once(function()
 					track.OnEndConnection = nil
 					if trackHasOnEnd then
-						task.spawn(track.OnEnd)
+						task.spawn(track.OnEnd, track)
 					end
 					if parametersHaveOnEnd then
-						task.spawn(parameters.OnEnd)
+						task.spawn(parameters.OnEnd, track)
 					end
 					if transitionToOnEnd then
 						module.PlayAnimation(state, { Name = transitionToOnEnd })
@@ -433,10 +466,10 @@ function module.PlayAnimation(state: AnimateState, parameters: {}): Track?
 			if trackHasOnLoop or parametersHaveOnLoop then
 				track.OnLoopConnection = track.Obj.DidLoop:Connect(function()
 					if trackHasOnLoop then
-						task.spawn(track.OnLoop)
+						task.spawn(track.OnLoop, track)
 					end
 					if parametersHaveOnLoop then
-						task.spawn(parameters.OnLoop)
+						task.spawn(parameters.OnLoop, track)
 					end
 				end)
 			end
@@ -527,7 +560,7 @@ function module.AddCharacter(sourceScript: BaseScript?, character: Model)
 
 	local state: AnimateState = {
 		Tracks = {},
-		HumanoidStates = {},
+		HumanoidStates = { Standing = true },
 		Connections = {},
 		Threads = {},
 		PlayLocks = {},
@@ -714,7 +747,7 @@ function module.AddCharacter(sourceScript: BaseScript?, character: Model)
 		end
 		local isAnimInstance = typeof(emote) == "Instance" and emote:IsA("Animation")
 		if typeof(emote) == "string" or isAnimInstance then
-			local track
+			local track: Track
 			if isAnimInstance then
 				track = resolveTrack(state, { Name = emote.AnimationId })
 				if not track then
@@ -759,19 +792,19 @@ function module.InitClient()
 		remoteEvent.OnClientEvent:Connect(function(action: string, parameters: {})
 			if action == "AddAnimation" then
 				module.DeferUntilCharacterAdded(parameters.Character, function()
-					module.AddAnimation(module.GetStateFromCharacter(parameters.Character), parameters.AddAnimationParameters)
+					module.AddAnimation(module.GetStateFromCharacter(parameters.Character), parameters.Parameters)
 				end)
 				return
 			end
 			if action == "PlayAnimation" then
 				module.DeferUntilCharacterAdded(parameters.Character, function()
-					module.PlayAnimation(module.GetStateFromCharacter(parameters.Character), parameters.PlayAnimationParameters)
+					module.PlayAnimation(module.GetStateFromCharacter(parameters.Character), parameters.Parameters)
 				end)
 				return
 			end
 			if action == "StopAnimation" then
 				module.DeferUntilCharacterAdded(parameters.Character, function()
-					module.StopAnimation(module.GetStateFromCharacter(parameters.Character), parameters.StopAnimationParameters)
+					module.StopAnimation(module.GetStateFromCharacter(parameters.Character), parameters.Parameters)
 				end)
 				return
 			end
