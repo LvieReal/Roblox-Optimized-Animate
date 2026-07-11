@@ -3,10 +3,14 @@
 
 local module = {}
 
-if game.RunService:IsServer() then
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+
+if RunService:IsServer() then
 
 	local function addHumanoid(humanoid: Humanoid, playersOnly: boolean)
-		if playersOnly and not game.Players:GetPlayerFromCharacter(humanoid.Parent) then
+		if playersOnly and not Players:GetPlayerFromCharacter(humanoid.Parent) then
 			return
 		end
 		local newAnimate = script:FindFirstChild("ActivateScript"):Clone()
@@ -24,6 +28,11 @@ if game.RunService:IsServer() then
 	end
 
 	function module.InitServer(playersOnly: boolean)
+		local remoteEvent = Instance.new("RemoteEvent")
+		remoteEvent.Name = "AnimateClientEvent"
+		remoteEvent.Parent = ReplicatedStorage
+		module.__RemoteEvent = remoteEvent
+
 		for _, v in workspace:QueryDescendants("Humanoid") do
 			task.spawn(addHumanoid, v, playersOnly)
 		end
@@ -33,6 +42,31 @@ if game.RunService:IsServer() then
 			end
 			addHumanoid(descendant, playersOnly)
 		end)
+	end
+
+	function module.AddAnimationServer(character: Model, parameters: {})
+		local args = {"AddAnimation", {
+			Character = character,
+			AddAnimationParameters = parameters
+		}}
+		module.__RemoteEvent:FireAllClients(unpack(args))
+		Players.PlayerAdded:Connect(function(player)
+			module.__RemoteEvent:FireClient(player, unpack(args))
+		end)
+	end
+
+	function module.PlayAnimationServer(character: Model, parameters: {})
+		module.__RemoteEvent:FireAllClients("PlayAnimation", {
+			Character = character,
+			PlayAnimationParameters = parameters
+		})
+	end
+	
+	function module.StopAnimationServer(character: Model, parameters: {})
+		module.__RemoteEvent:FireAllClients("StopAnimation", {
+			Character = character,
+			StopAnimationParameters = parameters
+		})
 	end
 
 	return module
@@ -67,13 +101,12 @@ module.LEGACY_ANIM_NAMES_MAP = {
 
 module.NON_LOOPED_ANIMS = { "wave", "point", "laugh", "cheer" }
 
-local active = {}
-local deferred = {}
-
 export type Track = {
 	Obj: AnimationTrack,
 	Weight: number,
-	AlwaysPlaying: boolean,
+	AlwaysPlaying: boolean?,
+	PlayEverySeconds: number?,
+	PlayEverySecondsElapsed: number?,
 	LastTimePosition: number,
 	OnEnd: () -> (),
 	OnEndConnection: RBXScriptConnection,
@@ -92,6 +125,9 @@ export type AnimateState = {
 	Animator: Animator,
 	PlayingEmote: Track?
 }
+
+local active: {[Model]: AnimateState} = {}
+local deferred = {}
 
 local function resolveTrack(state, parameters: {}): Track?
 	local track = state.Tracks[parameters.Name]
@@ -128,13 +164,14 @@ local function addAnimationLegacyWay(state: AnimateState, v)
 		return
 	end
 	local isLooped = not table.find(module.NON_LOOPED_ANIMS, v.Parent.Name)
-	local alwaysPlaying = n:match("Tool") or n == "Mood"
+	local alwaysPlaying = n:match("Tool")
 	module.AddAnimation(state, {
 		Name = n,
 		Animation = v,
 		AlwaysPlaying = alwaysPlaying,
 		Looped = isLooped,
-		Priority = if alwaysPlaying then Enum.AnimationPriority.Idle else nil
+		Priority = if alwaysPlaying then Enum.AnimationPriority.Idle else nil,
+		PlayAfterLoaded = n == "Idle"
 	})
 end
 
@@ -143,7 +180,7 @@ function module.GetStateFromCharacter(character: Model): AnimateState
 end
 
 function module.AddAnimation(state: AnimateState, parameters: {}): Track
-	
+
 	if not state.Animator then
 		return
 	end
@@ -158,10 +195,10 @@ function module.AddAnimation(state: AnimateState, parameters: {}): Track
 		return
 	end
 
-	local weight = animationObj:FindFirstChild("Weight")
-	local weightValue = if weight and weight:IsA("NumberValue") then weight.Value else 1
-
 	local trackObj = state.Animator:LoadAnimation(animationObj)
+	if not trackObj then
+		return
+	end
 	trackObj.Name = n
 	trackObj.Priority = parameters.Priority or Enum.AnimationPriority.Core
 	if typeof(parameters.Looped) == "boolean" then
@@ -179,10 +216,15 @@ function module.AddAnimation(state: AnimateState, parameters: {}): Track
 		end)
 	end
 
+	local weight = animationObj:FindFirstChild("Weight")
+	local weightValue = if weight and weight:IsA("NumberValue") then weight.Value else 1
+
 	local trackInfo: Track = {
 		Obj = trackObj,
 		Weight = weightValue,
 		AlwaysPlaying = parameters.AlwaysPlaying,
+		PlayEverySeconds = parameters.PlayEverySeconds,
+		PlayEverySecondsElapsed = if parameters.PlayEverySeconds then 0 else nil,
 		OnEnd = parameters.OnEnd,
 		OnLoop = parameters.OnLoop
 	}
@@ -196,6 +238,10 @@ function module.AddAnimation(state: AnimateState, parameters: {}): Track
 			List = { trackInfo },
 			TotalWeight = weightValue
 		}
+	end
+
+	if parameters.PlayAfterLoaded then
+		module.PlayAnimation(state, { Name = n })
 	end
 
 	return trackInfo
@@ -334,7 +380,8 @@ function module.PlayAnimation(state: AnimateState, parameters: {}): Track?
 		if not track.Obj.Looped then
 			local trackHasOnEnd = typeof(track.OnEnd) == "function"
 			local parametersHaveOnEnd = typeof(parameters.OnEnd) == "function"
-			if trackHasOnEnd or parametersHaveOnEnd then
+			local transitionToOnEnd = parameters.TransitionToOnEnd
+			if trackHasOnEnd or parametersHaveOnEnd or transitionToOnEnd then
 				track.OnEndConnection = track.Obj.Ended:Once(function()
 					track.OnEndConnection = nil
 					if trackHasOnEnd then
@@ -342,6 +389,9 @@ function module.PlayAnimation(state: AnimateState, parameters: {}): Track?
 					end
 					if parametersHaveOnEnd then
 						task.spawn(parameters.OnEnd)
+					end
+					if transitionToOnEnd then
+						module.PlayAnimation(state, { Name = transitionToOnEnd })
 					end
 				end)
 			end
@@ -409,7 +459,7 @@ end
 
 function module.AddCharacter(sourceScript: BaseScript?, character: Model)
 
-	if game.Players:GetPlayerFromCharacter(character) and character ~= game.Players.LocalPlayer.Character then
+	if Players:GetPlayerFromCharacter(character) and character ~= Players.LocalPlayer.Character then
 		return
 	end
 
@@ -478,9 +528,6 @@ function module.AddCharacter(sourceScript: BaseScript?, character: Model)
 			addAnimationLegacyWay(state, v)
 		end
 	end
-
-	module.PlayAnimation(state, { Name = "Idle" })
-	module.PlayAnimation(state, { Name = "Mood" })
 
 	table.insert(state.Connections, humanoid.Running:Connect(function(speed)
 		if
@@ -651,9 +698,7 @@ function module.AddCharacter(sourceScript: BaseScript?, character: Model)
 				{
 					Name = track.Obj.Name,
 					OverrideAll = true,
-					OnEnd = function()
-						module.PlayAnimation(state, { Name = "Idle" })
-					end
+					TransitionToOnEnd = "Idle"
 				}
 			)
 			state.PlayingEmote = track
@@ -671,6 +716,50 @@ function module.AddCharacter(sourceScript: BaseScript?, character: Model)
 	end))
 
 	return state
+
+end
+
+function module.InitClient()
+
+	local remoteEvent: RemoteEvent? = ReplicatedStorage:WaitForChild("AnimateClientEvent", 5)
+	if remoteEvent then
+		remoteEvent.OnClientEvent:Connect(function(action: string, parameters: {})
+			if action == "AddAnimation" then
+				module.DeferUntilCharacterAdded(parameters.Character, function()
+					module.AddAnimation(module.GetStateFromCharacter(parameters.Character), parameters.AddAnimationParameters)
+				end)
+				return
+			end
+			if action == "PlayAnimation" then
+				module.DeferUntilCharacterAdded(parameters.Character, function()
+					module.PlayAnimation(module.GetStateFromCharacter(parameters.Character), parameters.PlayAnimationParameters)
+				end)
+				return
+			end
+			if action == "StopAnimation" then
+				module.DeferUntilCharacterAdded(parameters.Character, function()
+					module.StopAnimation(module.GetStateFromCharacter(parameters.Character), parameters.StopAnimationParameters)
+				end)
+				return
+			end
+		end)
+	end
+
+	RunService.PostSimulation:Connect(function(deltaTime)
+		for character, state in active do
+			module.ForEachTrack(state, function(name, _, track: Track)
+				if not track.PlayEverySeconds or track.Obj.IsPlaying then
+					return
+				end
+				track.PlayEverySecondsElapsed += deltaTime
+				if track.PlayEverySecondsElapsed < track.PlayEverySeconds then
+					return
+				end
+				track.PlayEverySecondsElapsed = 0
+				module.PlayAnimation(state, { Name = name })
+			end)
+		end
+	end)
 
 end
 
