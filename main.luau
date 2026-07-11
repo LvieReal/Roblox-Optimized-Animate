@@ -206,7 +206,12 @@ local function addAnimationLegacyWay(state: AnimateState, v: Animation)
 		Name = n,
 		Animation = v,
 		AlwaysPlaying = alwaysPlaying,
-		Priority = if alwaysPlaying then Enum.AnimationPriority.Idle else nil
+		Priority = if alwaysPlaying then Enum.AnimationPriority.Idle else nil,
+		OnEnd = function(thisTrackInfo: Track) -- KeyframeReached does not always work for some reason
+			if n == "Idle" and thisTrackInfo.Priority ~= 9 then
+				module.PlayAnimation(state, { Name = "Idle" })
+			end
+		end
 	})
 	if trackInfo then
 		if not table.find(module.NON_LOOPED_ANIMS, v.Parent.Name) then
