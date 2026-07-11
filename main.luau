@@ -61,7 +61,7 @@ if RunService:IsServer() then
 			PlayAnimationParameters = parameters
 		})
 	end
-	
+
 	function module.StopAnimationServer(character: Model, parameters: {})
 		module.__RemoteEvent:FireAllClients("StopAnimation", {
 			Character = character,
@@ -104,6 +104,7 @@ module.NON_LOOPED_ANIMS = { "wave", "point", "laugh", "cheer" }
 export type Track = {
 	Obj: AnimationTrack,
 	Weight: number,
+	WeightInstance: NumberValue?,
 	AlwaysPlaying: boolean?,
 	PlayEverySeconds: number?,
 	PlayEverySecondsElapsed: number?,
@@ -216,12 +217,9 @@ function module.AddAnimation(state: AnimateState, parameters: {}): Track
 		end)
 	end
 
-	local weight = animationObj:FindFirstChild("Weight")
-	local weightValue = if weight and weight:IsA("NumberValue") then weight.Value else 1
-
 	local trackInfo: Track = {
 		Obj = trackObj,
-		Weight = weightValue,
+		Weight = 1,
 		AlwaysPlaying = parameters.AlwaysPlaying,
 		PlayEverySeconds = parameters.PlayEverySeconds,
 		PlayEverySecondsElapsed = if parameters.PlayEverySeconds then 0 else nil,
@@ -229,14 +227,40 @@ function module.AddAnimation(state: AnimateState, parameters: {}): Track
 		OnLoop = parameters.OnLoop
 	}
 
+	local function addWeight(weight: NumberValue?)
+		if not weight or trackInfo.WeightInstance and trackInfo.WeightInstance.Parent then
+			return
+		end
+		trackInfo.WeightInstance = weight
+		trackInfo.Weight = weight.Value
+		table.insert(state.Connections, weight:GetPropertyChangedSignal("Value"):Connect(function()
+			trackInfo.Weight = weight.Value
+			if state.Tracks[n] then
+				local totalWeight = 0
+				for _, v in state.Tracks[n].List do
+					totalWeight += v.Weight
+				end
+				state.Tracks[n].TotalWeight = totalWeight
+			end
+		end))
+	end
+
+	addWeight(animationObj:QueryDescendants("> NumberValue [Name = \"Weight\"]")[1])
+	table.insert(state.Connections, animationObj.ChildAdded:Connect(function(child)
+		if not child:IsA("NumberValue") then
+			return
+		end
+		addWeight(child)
+	end))
+
 	local existingTrack = state.Tracks[n]
 	if existingTrack then
-		existingTrack.TotalWeight += weightValue
+		existingTrack.TotalWeight += trackInfo.Weight
 		table.insert(existingTrack.List, trackInfo)
 	else
 		state.Tracks[n] = {
 			List = { trackInfo },
-			TotalWeight = weightValue
+			TotalWeight = trackInfo.Weight
 		}
 	end
 
@@ -452,6 +476,9 @@ function module.RemoveCharacter(character: Model)
 		end
 	end
 	for _, v in state.Connections do
+		if not v.Connected then
+			continue
+		end
 		v:Disconnect()
 	end
 	active[character] = nil
