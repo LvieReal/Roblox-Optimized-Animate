@@ -165,7 +165,8 @@ type StopAllAnimationsParameters = {
 }
 
 local active: {[Model]: AnimateState} = {}
-local deferred = {}
+local charAddedDeferred = {}
+local trackAddedDeferred = {}
 
 local function resolveTrack(state, parameters: { Name: string?, SubId: number? }): Track?
 	local track = state.Tracks[parameters.Name]
@@ -301,6 +302,14 @@ function module.AddAnimation(state: AnimateState, parameters: AddAnimationParame
 			TotalWeight = trackInfo.Weight
 		}
 		subId = 1
+	end
+
+	local deferred = trackAddedDeferred[state.Character]
+	if deferred and deferred[n] then
+		for _, f in deferred[n] do
+			task.spawn(f, state.Tracks[n])
+		end
+		trackAddedDeferred[state.Character][n] = nil
 	end
 
 	if parameters.PlayAfterLoaded then
@@ -495,17 +504,44 @@ function module.DeferUntilCharacterAdded(character: Model, f: () -> ())
 		task.spawn(f, active[character])
 		return
 	end
-	if not deferred[character] then
-		deferred[character] = {f}
+	if not charAddedDeferred[character] then
+		charAddedDeferred[character] = {f}
 	else
-		table.insert(deferred[character], f)
+		table.insert(charAddedDeferred[character], f)
 	end
 	task.delay(5, function()
-		if not deferred[character] then
+		if not charAddedDeferred[character] then
 			return
 		end
-		warn("Animate Module defer for character " .. tostring(character) .. " timed out")
-		deferred[character] = nil
+		warn("Animate Module defer wait for character " .. tostring(character) .. " timed out")
+		charAddedDeferred[character] = nil
+	end)
+end
+
+function module.DeferUntilTrackAdded(state: AnimateState, n: string, f: () -> ())
+	if not state then
+		return
+	end
+	if state.Tracks[n] then
+		task.spawn(f, state.Tracks[n])
+		return
+	end
+	local existing = trackAddedDeferred[state.Character]
+	if not existing then
+		existing = {}
+		trackAddedDeferred[state.Character] = existing
+	end
+	if not existing[n] then
+		existing[n] = {f}
+	else
+		table.insert(existing[n], f)
+	end
+	task.delay(5, function()
+		if not trackAddedDeferred[state.Character] or not trackAddedDeferred[state.Character][n] then
+			return
+		end
+		warn("Animate Module defer track wait for character " .. tostring(state.Character) .. " timed out")
+		trackAddedDeferred[state.Character] = nil
 	end)
 end
 
@@ -576,11 +612,12 @@ function module.AddCharacter(sourceScript: BaseScript?, character: Model)
 
 	active[character] = state
 
-	if deferred[character] then
-		for _, f in deferred[character] do
+	local deferred = charAddedDeferred[character]
+	if deferred then
+		for _, f in deferred do
 			task.spawn(f, state)
 		end
-		deferred[character] = nil
+		charAddedDeferred[character] = nil
 	end
 
 	for _, v in sourceScript:QueryDescendants("Animation") do
